@@ -11,7 +11,7 @@ concept in the exercise is something you can see happen on the page.
 | Release a feature behind a flag, roll it back | The checkout banner switches between old and new copy |
 | Instant release and rollback, no reload | A `change` listener in the browser SDK swaps it live |
 | Remediate with a trigger | `npm run remediate` (curl) turns the feature off, the page updates |
-| Bonus: remediation with no human | A guarded rollout watches checkout errors and rolls back on its own |
+| Bonus: remediation with no human | A guarded rollout watched checkout errors and rolled back on its own, 3 minutes in |
 | Context attributes, individual and rule-based targeting | The hero changes when you switch the demo user (a user + organization multi-context) |
 | Extra credit: Experimentation | A running experiment on the hero, measured on CTA clicks |
 | Extra credit: AI Configs | A support chat whose prompt, model and model settings come from LaunchDarkly |
@@ -304,9 +304,17 @@ puts the flag back (OFF, default rule serving the new banner) so Part 1's
 on/off toggle behaves as described. A plain re-run never does this, so it
 cannot undo a release in progress.
 
-**Status:** the metric, the checkout signal and the simulator were run against
-the trial account. The UI step and the automatic rollback have not been
-exercised yet; this line will change when they have.
+**Result on the trial account (2026-10-09).** The guarded release was started
+in the UI at 16:30:08 UTC (5% old banner, 5% new banner) with the regression
+simulator running. At **16:33:08 UTC, three minutes later, LaunchDarkly
+reverted it on its own**; the flag's audit log reads "Reverted the guarded
+release on the default rule and is now serving `Old banner`". At that point the
+new banner had served 40 simulated visitors with 14 checkout errors (35%), the
+old banner 660 with 18 (2.7%), and no visitor was served the new banner
+afterwards. No person and no deploy were involved. (The audit entry records the
+revert; LaunchDarkly's stated reason is shown on the flag's Monitoring tab, not
+in the API response.) `npm run setup:ld -- --reset-demo` then put the flag back
+for Part 1.
 
 ---
 
