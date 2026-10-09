@@ -12,7 +12,8 @@
     "setup:ld": "node --env-file-if-exists=.env scripts/setup-launchdarkly.mjs",
     "setup:experiment": "node --env-file-if-exists=.env scripts/setup-experiment.mjs",
     "setup:ai": "node --env-file-if-exists=.env scripts/setup-ai-config.mjs",
-    "simulate": "node --env-file-if-exists=.env scripts/simulate-traffic.mjs"
+    "simulate": "node --env-file-if-exists=.env scripts/simulate-traffic.mjs",
+    "remediate": "set -a; [ -f .env ] && . ./.env; set +a; ./scripts/remediate.sh"
   },
   "dependencies": {
     "@launchdarkly/js-client-sdk": "^4.0.0",
@@ -24,6 +25,6 @@
     "esbuild": "^0.23.0"
   },
   "engines": {
-    "node": ">=20"
+    "node": ">=20.19.0"
   }
 }

@@ -32,12 +32,15 @@ import { initAi, LDFeedbackKind } from '@launchdarkly/server-sdk-ai';
 
 export const AI_CONFIG_KEY = 'support-chat';
 
-// Fallback value used when the AI Config is disabled, unreachable, or the
-// SDK is talking to TestData with nothing configured for this key yet. Kept
-// deliberately small and generic, the way server/ldClient.mjs falls back to
-// `false` / `'control'` for the two demo flags.
+// Fallback value used when LaunchDarkly cannot provide the AI Config: the
+// SDK never finished initializing, the key doesn't exist yet, or (in
+// tests) TestData has nothing configured for it. `enabled: false` is the
+// deliberate choice here, not `true`: if LaunchDarkly can't tell this app
+// what to say, the safest default is to say nothing to a model at all,
+// rather than guess a prompt. reply() below checks config.enabled before
+// ever reaching the fetch call, so this fallback never calls a model.
 const DEFAULT_AI_CONFIG = {
-  enabled: true,
+  enabled: false,
   model: { name: 'gemma4:e4b' },
   messages: [
     {
@@ -99,14 +102,17 @@ export function createSupportChat({ ldClient, fetchImpl = fetch, baseUrl, apiKey
    * model answered, plus a resumption token so a later thumbs up/down can
    * be attached to this exact run.
    *
-   * @param {object} context - an LD context object (see server/contexts.mjs toLdContext)
+   * @param {object} context - an LD multi-context (see server/contexts.mjs
+   *   toLdContext/toVisitorLdContext): a "user" kind and an "organization" kind
    * @param {string} userMessage
    */
   async function reply(context, userMessage) {
+    // plan lives on the organization kind, the visitor's name on the user
+    // kind, since server/contexts.mjs moved both into a multi-context.
     const variables = {
       companyName: 'ABC Company',
-      userName: context.name,
-      plan: context.plan,
+      userName: context.user?.name,
+      plan: context.organization?.plan,
     };
 
     const config = await aiClient.completionConfig(
@@ -118,7 +124,7 @@ export function createSupportChat({ ldClient, fetchImpl = fetch, baseUrl, apiKey
 
     if (!config.enabled) {
       return {
-        reply: "Support chat isn't enabled for this account right now.",
+        reply: 'Support chat is turned off right now.',
         variationKey: undefined,
         model: undefined,
         durationMs: 0,

@@ -14,7 +14,7 @@ import { fileURLToPath } from 'node:url';
 import express from 'express';
 
 import { createLdClient, FLAG_RELEASE_BANNER, FLAG_HERO_REDESIGN } from './ldClient.mjs';
-import { DEMO_CONTEXTS, findDemoContext, toLdContext } from './contexts.mjs';
+import { DEMO_CONTEXTS, toLdContext, resolveLdContext } from './contexts.mjs';
 import { createSupportChat } from './aiChat.mjs';
 
 // `npm start`/`npm run dev` already load .env via `node --env-file-if-exists`
@@ -34,6 +34,56 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const PUBLIC_DIR = path.join(__dirname, '..', 'public');
 const PORT = process.env.PORT ? Number(process.env.PORT) : 8080;
 
+// Chat abuse limits (no new dependency): a small in-memory limiter, applied
+// as Express middleware in front of POST /api/chat only. Two separate
+// limits, because they protect against two different things:
+//   - per-IP request rate: a visitor hammering the endpoint.
+//   - total concurrency: several visitors at once each triggering a slow
+//     model call, which would otherwise pile up unbounded.
+// Exported as a factory (rather than wired up as a closure inline) so
+// test/chatLimiter.test.mjs can exercise it directly against fake
+// req/res objects, with no Express app and no network calls.
+export function createChatRequestLimiter({ windowMs = 60_000, maxPerWindow = 10, maxConcurrent = 2 } = {}) {
+  const hitsByIp = new Map();
+  let inFlight = 0;
+
+  function recentHits(ip, now) {
+    const hits = (hitsByIp.get(ip) ?? []).filter((t) => now - t < windowMs);
+    hitsByIp.set(ip, hits);
+    return hits;
+  }
+
+  return function chatRequestLimiter(req, res, next) {
+    const now = Date.now();
+    const ip = req.ip ?? 'unknown';
+    const hits = recentHits(ip, now);
+
+    if (hits.length >= maxPerWindow) {
+      res.status(429).json({ error: 'Too many chat requests from this address. Try again in a minute.' });
+      return;
+    }
+    if (inFlight >= maxConcurrent) {
+      res.status(429).json({ error: 'Support chat is busy. Try again shortly.' });
+      return;
+    }
+
+    hits.push(now);
+    inFlight += 1;
+    // A request can end by finishing normally or by the connection closing
+    // early; either way the concurrency slot must be released exactly
+    // once, so both are wired to the same guarded release.
+    let released = false;
+    const release = () => {
+      if (released) return;
+      released = true;
+      inFlight -= 1;
+    };
+    res.on('finish', release);
+    res.on('close', release);
+    next();
+  };
+}
+
 async function main() {
   const app = express();
 
@@ -41,6 +91,7 @@ async function main() {
   // server/ldClient.mjs for the comment on where LD_SDK_KEY comes from.
   const ldClient = await createLdClient();
   const supportChat = createSupportChat({ ldClient });
+  const chatRequestLimiter = createChatRequestLimiter();
 
   app.use(express.static(PUBLIC_DIR));
   // Small limit: chat messages are capped at 500 chars (validated below),
@@ -99,15 +150,16 @@ async function main() {
     );
   });
 
-  // GET /api/flags?user=<preset-key>
-  // Evaluates both demo flags server-side for the given preset context,
-  // using the Node server SDK. This is here purely to demonstrate the
-  // server SDK in the same app that showcases the browser SDK; the page's
-  // live UI relies on the browser SDK's own evaluations.
+  // GET /api/flags?user=<preset-key | visitor key>
+  // Evaluates both demo flags server-side for the given context, using the
+  // Node server SDK. This is here purely to demonstrate the server SDK in
+  // the same app that showcases the browser SDK; the page's live UI relies
+  // on the browser SDK's own evaluations. resolveLdContext() accepts both
+  // a fixed demo- preset key and a generated visitor- key (see
+  // server/contexts.mjs), falling back to the first demo preset for an
+  // unrecognized or missing key.
   app.get('/api/flags', async (req, res) => {
-    const presetKey = req.query.user;
-    const preset = findDemoContext(presetKey) ?? DEMO_CONTEXTS[0];
-    const context = toLdContext(preset);
+    const context = resolveLdContext(req.query.user) ?? toLdContext(DEMO_CONTEXTS[0]);
 
     const [releaseBanner, heroRedesign] = await Promise.all([
       ldClient.variation(FLAG_RELEASE_BANNER, context, false),
@@ -124,19 +176,23 @@ async function main() {
   });
 
   // POST /api/chat {user, message}
-  // Extra credit: AI Configs. `user` must be one of the five preset demo
-  // keys (same contexts the rest of the demo uses, see
-  // server/contexts.mjs), `message` is the visitor's chat line, capped at
-  // 500 characters the way a real support widget would cap it. The reply,
-  // model, and variation come from server/aiChat.mjs, which resolves the
-  // "support-chat" AI Config server-side, the browser never talks to
-  // LaunchDarkly or the model provider directly.
-  app.post('/api/chat', async (req, res) => {
+  // Extra credit: AI Configs. `user` must be one of the preset demo keys
+  // or a generated visitor key (same contexts the rest of the demo uses,
+  // see server/contexts.mjs), `message` is the visitor's chat line, capped
+  // at 500 characters the way a real support widget would cap it. The
+  // reply, model, and variation come from server/aiChat.mjs, which
+  // resolves the "support-chat" AI Config server-side, the browser never
+  // talks to LaunchDarkly or the model provider directly.
+  //
+  // chatRequestLimiter runs first: 10 requests per minute per IP, and at
+  // most 2 model calls in flight at once, both as a 429 with no model
+  // call made (see createChatRequestLimiter() above).
+  app.post('/api/chat', chatRequestLimiter, async (req, res) => {
     const { user, message } = req.body ?? {};
 
-    const preset = findDemoContext(user);
-    if (!preset) {
-      res.status(400).json({ error: 'user must be one of the preset demo context keys' });
+    const context = resolveLdContext(user);
+    if (!context) {
+      res.status(400).json({ error: 'user must be a preset demo context key or a valid visitor key' });
       return;
     }
     if (typeof message !== 'string' || message.length < 1 || message.length > 500) {
@@ -144,7 +200,6 @@ async function main() {
       return;
     }
 
-    const context = toLdContext(preset);
     const result = await supportChat.reply(context, message);
     res.json(result);
   });
@@ -168,13 +223,13 @@ async function main() {
       return;
     }
 
-    const preset = findDemoContext(user);
-    if (!preset) {
-      res.status(400).json({ error: 'user must be one of the preset demo context keys' });
+    const context = resolveLdContext(user);
+    if (!context) {
+      res.status(400).json({ error: 'user must be a preset demo context key or a valid visitor key' });
       return;
     }
 
-    supportChat.feedback(token, positive, toLdContext(preset));
+    supportChat.feedback(token, positive, context);
     res.json({ ok: true });
   });
 
@@ -199,8 +254,15 @@ async function main() {
   process.on('SIGTERM', shutdown);
 }
 
-main().catch((err) => {
-  // eslint-disable-next-line no-console
-  console.error('Failed to start server:', err);
-  process.exit(1);
-});
+// Only boot the server when this file is run directly (`node server/index.mjs`,
+// which is what `npm start`/`npm run dev` do). test/chatLimiter.test.mjs
+// imports createChatRequestLimiter from this module without wanting a
+// server, an LD client, or a listening port as a side effect of that import.
+const isMainModule = process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url);
+if (isMainModule) {
+  main().catch((err) => {
+    // eslint-disable-next-line no-console
+    console.error('Failed to start server:', err);
+    process.exit(1);
+  });
+}

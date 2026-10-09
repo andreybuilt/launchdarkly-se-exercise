@@ -1,0 +1,42 @@
+# Local Docker Compose setup for the ABC Company LaunchDarkly demo.
+#
+# Usage:
+#   cp .env.example .env   # fill in LD_SDK_KEY, LD_CLIENT_SIDE_ID, etc.
+#   docker compose up --build
+#
+# `env_file` loads every value from .env into the container, including the
+# LaunchDarkly keys the README describes. If your Compose version rejects
+# `required: false` below, drop that line and just make sure .env exists
+# (an empty file is fine) before running `up`.
+
+services:
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: abc-company-ld-demo:local
+    ports:
+      - "8080:8080"
+    env_file:
+      - path: .env
+        required: false
+    restart: unless-stopped
+
+  # Optional: a local Ollama server for the AI Configs extra credit, so the
+  # app does not need a hosted model endpoint. Uncomment to use it, then set
+  # LLM_BASE_URL=http://ollama:11434 (and leave LLM_API_KEY unset) in .env so
+  # the app container reaches it by its Compose service name instead of
+  # localhost. Pull the two demo models once the container is up:
+  #   docker compose exec ollama ollama pull gemma4:e4b
+  #   docker compose exec ollama ollama pull gemma4:26b
+  #
+  # ollama:
+  #   image: ollama/ollama
+  #   ports:
+  #     - "11434:11434"
+  #   volumes:
+  #     - ollama-data:/root/.ollama
+  #   restart: unless-stopped
+
+# volumes:
+#   ollama-data:

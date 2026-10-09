@@ -6,10 +6,16 @@
 // daily visitors in the brief, at a much smaller scale, so the experiment has
 // data to analyse.
 //
+// Each simulated visitor is a multi-context, the same shape
+// server/contexts.mjs builds for the real app: a "user" kind (key
+// "sim-<run>-<n>", betaTester: false, simulated: true) and an
+// "organization" kind (key "org-sim-<n % 50>", a random plan of free or
+// pro). Neither kind is a demo- key and neither matches the enterprise or
+// betaTester rules, so every simulated visitor falls through to the
+// experiment rather than the Part 2 targeting rules.
+//
 // For each simulated visitor it:
-//   1. builds a context (key "sim-<n>", attribute simulated: true, a random
-//      plan of free or pro and betaTester false, so the visitor falls through
-//      to the experiment rather than the Part 2 rules);
+//   1. builds the multi-context above;
 //   2. evaluates landing-hero-redesign with the server SDK, exactly as a real
 //      page view would (this records the experiment exposure);
 //   3. "clicks" the hero CTA with a probability that depends on the variation
@@ -48,13 +54,19 @@ const clicks = { control: 0, redesign: 0 };
 
 for (let i = 1; i <= TOTAL; i++) {
   const context = {
-    kind: 'user',
-    key: `sim-${runId}-${i}`,
-    name: `Simulated visitor ${i}`,
-    plan: pick(['free', 'free', 'pro']),
-    region: pick(['us-west', 'us-east', 'eu']),
-    betaTester: false,
-    simulated: true,
+    kind: 'multi',
+    user: {
+      key: `sim-${runId}-${i}`,
+      name: `Simulated visitor ${i}`,
+      betaTester: false,
+      simulated: true,
+      region: pick(['us-west', 'us-east', 'eu']),
+    },
+    organization: {
+      key: `org-sim-${i % 50}`,
+      name: `Simulated Org ${i % 50}`,
+      plan: pick(['free', 'free', 'pro']),
+    },
   };
   const variation = await client.variation(FLAG, context, 'control');
   served[variation] = (served[variation] || 0) + 1;

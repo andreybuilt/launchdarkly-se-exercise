@@ -12,7 +12,9 @@
 //      no page reload (Part 1's "listener" requirement).
 //   4. Wires up the context switcher panel, calling client.identify(...)
 //      whenever the presenter picks a different preset user (Part 2's
-//      live re-targeting requirement).
+//      live re-targeting requirement). Six presets: the five fixed demo
+//      users plus "New visitor", a freshly generated context that is not a
+//      demo- key and so falls into the experiment.
 //   5. Extra credit: AI Configs. Wires up the support chat panel, a plain
 //      fetch to the server's /api/chat and /api/chat/feedback (no
 //      LaunchDarkly keys reach the browser for this, see server/aiChat.mjs).
@@ -23,8 +25,15 @@
 //
 // SDK surface used here (see the installed packages for the full API):
 //   @launchdarkly/js-client-sdk: createClient(clientSideId, pristineContext, options?)
-//   @launchdarkly/js-client-sdk-common: LDEmitter.on(name, listener),
-//     LDClientImpl.identify(pristineContext, identifyOptions?)
+//   @launchdarkly/js-client-sdk-common: LDEmitter.on(name, listener) - the
+//     EventName union includes 'change', `change:${flagKey}`,
+//     'dataSourceStatus', 'error', 'initialized', 'ready' (see
+//     node_modules/@launchdarkly/js-client-sdk-common/dist/esm/LDEmitter.d.ts).
+//     'dataSourceStatus' emits a DataSourceStatus object with
+//     state: 'INITIALIZING' | 'VALID' | 'INTERRUPTED' | 'SET_OFFLINE' | 'CLOSED'
+//     (DataSourceStatus.d.ts in the same package) - this is the mechanism
+//     used below to know when the stream is actually live, independent of
+//     whether start() has resolved.
 
 import { createClient } from '@launchdarkly/js-client-sdk';
 
@@ -34,15 +43,53 @@ const FLAG_HERO_REDESIGN = 'landing-hero-redesign';
 const demoContexts = window.__DEMO_CONTEXTS__ ?? [];
 const clientSideId = window.__LD_CLIENT_SIDE_ID__ ?? '';
 
+// The sixth preset. Generated once per page load (a fresh key on every
+// reload), never a demo- key, so it always falls through the "key starts
+// with demo-" rule into the default rule where the experiment runs. Server
+// counterpart: server/contexts.mjs's generateVisitorKey()/VISITOR_KEY_PATTERN;
+// duplicated here in the Web Crypto form because this file cannot import a
+// server-only module, but it produces the identical "visitor-XXXXXXXX" shape.
+function generateVisitorKey() {
+  const bytes = new Uint8Array(4);
+  crypto.getRandomValues(bytes);
+  const hex = Array.from(bytes, (b) => b.toString(16).padStart(2, '0')).join('');
+  return `visitor-${hex}`;
+}
+
+const visitorPreset = {
+  key: generateVisitorKey(),
+  label: 'New visitor (enters the experiment)',
+  name: 'New visitor',
+  betaTester: false,
+  orgKey: 'org-visitor',
+  company: 'New Visitor Co',
+  plan: 'free',
+};
+
+// Builds the same multi-context shape server/contexts.mjs's toLdContext()/
+// toVisitorLdContext() build: a "user" kind for the person, an
+// "organization" kind for the account. region is only present on the fixed
+// demo presets (server/contexts.mjs never sets one for the visitor), so it
+// is added to the user kind only when the preset actually has one.
 function presetToLdContext(preset) {
-  return {
-    kind: preset.kind,
+  const user = {
     key: preset.key,
     name: preset.name,
-    plan: preset.plan,
-    region: preset.region,
     betaTester: preset.betaTester,
-    company: preset.company,
+    _meta: { privateAttributes: ['name'] },
+  };
+  if (preset.region) {
+    user.region = preset.region;
+  }
+  return {
+    kind: 'multi',
+    user,
+    organization: {
+      key: preset.orgKey,
+      name: preset.company,
+      plan: preset.plan,
+      _meta: { privateAttributes: ['name'] },
+    },
   };
 }
 
@@ -82,7 +129,7 @@ function renderHero(variation) {
     heroSlot.innerHTML = `
       <section class="hero hero-redesign">
         <h1>Built for teams that move fast.</h1>
-        <p>The redesigned ABC Company hero, targeted to this context.</p>
+        <p>The redesigned ABC Company hero (redesign variation).</p>
         <button type="button" class="hero-cta" data-cta="hero">Start your free trial</button>
       </section>`;
   } else {
@@ -211,10 +258,11 @@ async function main() {
     return;
   }
 
-  // Populate the context switcher with the five preset demo users.
-  contextSelect.innerHTML = demoContexts
-    .map((c) => `<option value="${c.key}">${c.label}</option>`)
-    .join('');
+  // Populate the context switcher with the five preset demo users plus the
+  // sixth "New visitor" preset (generated client-side, never sent by the
+  // server since its key only exists for this page load).
+  const allPresets = [...demoContexts, visitorPreset];
+  contextSelect.innerHTML = allPresets.map((c) => `<option value="${c.key}">${c.label}</option>`).join('');
 
   const initialPreset = demoContexts[0];
   const initialContext = presetToLdContext(initialPreset);
@@ -227,8 +275,8 @@ async function main() {
   });
 
   let currentContext = initialContext;
-  // Tracks which preset the chat panel should send with each message, kept
-  // in step with the context switcher below.
+  // Tracks which preset the chat panel and the CTA messaging should use,
+  // kept in step with the context switcher below.
   let currentPresetKey = initialPreset.key;
   const currentFlags = {
     [FLAG_RELEASE_BANNER]: false,
@@ -241,28 +289,70 @@ async function main() {
     renderUnderTheHood(context, currentFlags);
   }
 
-  // In js-client-sdk 4.x the client does not connect until start() is called,
-  // so listeners can be attached first. start() resolves to a status object
-  // ('complete' | 'failed' | 'timeout'); it does not throw on failure.
+  // ---- Attach every client.on(...) listener BEFORE calling client.start() ----
+  // In js-client-sdk 4.x the client does not connect until start() is
+  // called. Registering listeners first, rather than after kicking off
+  // start(), means nothing the connection does on its way up can be missed
+  // by a listener that was attached a tick too late.
+
+  // Part 1: live listener, no reload. client.on('change:<flagKey>', listener)
+  // fires whenever the flag's value changes for the currently identified
+  // context, whether that's because someone toggled it in LaunchDarkly, a
+  // trigger fired, or a targeting rule now matches differently after
+  // identify(). This is what lets a release/rollback or a remediation
+  // trigger update the page instantly.
   //
+  // In js-client-sdk 4.x the 'change:<flagKey>' event passes only the
+  // context, not the new value, so each listener reads the fresh value
+  // back with client.variation().
+  client.on(`change:${FLAG_RELEASE_BANNER}`, () => {
+    renderBanner(client.variation(FLAG_RELEASE_BANNER, false));
+    refreshUnderTheHoodPanel(currentContext);
+  });
+
+  client.on(`change:${FLAG_HERO_REDESIGN}`, () => {
+    renderHero(client.variation(FLAG_HERO_REDESIGN, 'control'));
+    refreshUnderTheHoodPanel(currentContext);
+  });
+
+  // 'dataSourceStatus' tells us when the stream is actually live,
+  // independent of start()'s own promise. With a bootstrap, start() can
+  // resolve 'complete' before the streaming connection has finished
+  // negotiating (the bootstrap satisfies start() immediately; the
+  // connection itself takes a moment longer), so the "Live: streaming"
+  // status line below is driven by this event, not by start() resolving.
+  client.on('dataSourceStatus', (status) => {
+    if (status.state === 'VALID') {
+      connectionStatusEl.textContent = 'Live: streaming from LaunchDarkly.';
+      connectionStatusEl.classList.remove('status-error');
+    } else if (status.state === 'INTERRUPTED' || status.state === 'CLOSED') {
+      connectionStatusEl.textContent =
+        `LaunchDarkly connection ${status.state.toLowerCase()}. Showing the last known flag values.`;
+      connectionStatusEl.classList.add('status-error');
+    }
+  });
+
   // No flicker on load: window.__LD_BOOTSTRAP__ (injected by /config.js) is
   // the flag state the server already evaluated for this same initial
-  // context, passed here as the `bootstrap` start option. The SDK applies it
-  // synchronously, so the variation() calls right below already reflect it,
-  // before the connection to LaunchDarkly (and the promise below) has
-  // resolved. Without it, the first paint would show the hard-coded
-  // defaults and then flip once streaming connects.
+  // context, passed here as the `bootstrap` start option. The SDK applies
+  // it synchronously, so the variation() calls right below already reflect
+  // it, before the connection to LaunchDarkly (and the promise below) has
+  // resolved.
   const startPromise = client.start({ timeout: 5, bootstrap: window.__LD_BOOTSTRAP__ });
 
   renderBanner(client.variation(FLAG_RELEASE_BANNER, false));
   renderHero(client.variation(FLAG_HERO_REDESIGN, 'control'));
   refreshUnderTheHoodPanel(initialContext);
+  // This is the bootstrap value, not yet the live stream: say so, and let
+  // the 'dataSourceStatus' listener above upgrade the message once the
+  // connection actually goes VALID.
+  connectionStatusEl.textContent = 'Loaded from server bootstrap.';
 
   const init = await startPromise;
-  if (init.status === 'complete') {
-    connectionStatusEl.textContent = 'Connected to LaunchDarkly (streaming).';
-    connectionStatusEl.classList.remove('status-error');
-  } else {
+  if (init.status !== 'complete') {
+    // start() resolves {status: 'complete' | 'failed' | 'timeout'} and
+    // never throws; a non-'complete' status is the one case
+    // 'dataSourceStatus' won't resolve on its own, so it is reported here.
     connectionStatusEl.textContent =
       `Could not reach LaunchDarkly (${init.status}). Check LD_CLIENT_SIDE_ID and network; ` +
       'the page is showing default flag values.';
@@ -276,38 +366,37 @@ async function main() {
   renderHero(client.variation(FLAG_HERO_REDESIGN, 'control'));
   refreshUnderTheHoodPanel(initialContext);
 
-  // ---- Part 1: live listener, no reload --------------------------------
-  // client.on('change:<flagKey>', listener) fires whenever the
-  // flag's value changes for the currently identified context, whether
-  // that's because someone toggled it in LaunchDarkly, a trigger fired,
-  // or a targeting rule now matches differently after identify(). This is
-  // what lets a release/rollback or a remediation trigger update the page
-  // instantly.
-  //
-  // In js-client-sdk 4.x the 'change:<flagKey>' event passes only the context,
-  // not the new value, so each listener reads the fresh value back with
-  // client.variation().
-  client.on(`change:${FLAG_RELEASE_BANNER}`, () => {
-    renderBanner(client.variation(FLAG_RELEASE_BANNER, false));
-    refreshUnderTheHoodPanel(currentContext);
-  });
-
-  client.on(`change:${FLAG_HERO_REDESIGN}`, () => {
-    renderHero(client.variation(FLAG_HERO_REDESIGN, 'control'));
-    refreshUnderTheHoodPanel(currentContext);
+  // Flush buffered events (flag evaluations, hero-cta-click, AI Config
+  // tracker events) before the tab is torn down. 'pagehide' fires on
+  // navigation, tab close and backgrounding on mobile, where 'unload' is
+  // unreliable; client.flush() here is fire-and-forget, there is no later
+  // point in the page lifecycle to await it from.
+  window.addEventListener('pagehide', () => {
+    client.flush();
   });
 
   // ---- Extra credit: Experimentation ------------------------------------
-  // The hero's call-to-action is the experiment's conversion metric. track()
-  // sends a custom event under the current context; LaunchDarkly joins it to
-  // the variation that context was served, which is what the experiment
-  // measures. The event key must match the metric created by
-  // scripts/setup-experiment.mjs ("hero-cta-click").
-  heroSlot.addEventListener('click', (ev) => {
-    if (ev.target.closest('[data-cta="hero"]')) {
-      client.track('hero-cta-click');
-      ev.target.textContent = 'Thanks! (conversion tracked)';
-    }
+  // The hero's call-to-action is the experiment's conversion metric.
+  // track() sends a custom event under the current context; LaunchDarkly
+  // joins it to the variation that context was served, which is what the
+  // experiment measures. The event key must match the metric created by
+  // scripts/setup-experiment.mjs ("hero-cta-click"). The experiment only
+  // runs on the flag's default rule (see scripts/setup-experiment.mjs), so
+  // a demo- user's click is still tracked for the demo, but is never part
+  // of the experiment's measured traffic, the message below says so.
+  heroSlot.addEventListener('click', async (ev) => {
+    const button = ev.target.closest('[data-cta="hero"]');
+    if (!button) return;
+
+    client.track('hero-cta-click');
+    button.disabled = true;
+    button.textContent = 'Sending...';
+    // Only report the click as sent once flush() has actually resolved,
+    // not the instant track() is called (track() only buffers the event).
+    await client.flush();
+    button.textContent = currentPresetKey.startsWith('demo-')
+      ? 'Tracked (demo users are not in the experiment)'
+      : 'Conversion sent';
   });
 
   // ---- Part 2: context switcher calls identify() ------------------------
@@ -316,7 +405,7 @@ async function main() {
   // listeners above fire if either value differs, so targeting changes
   // (individual target or rule match) are reflected live, no reload.
   contextSelect.addEventListener('change', async (ev) => {
-    const preset = demoContexts.find((c) => c.key === ev.target.value);
+    const preset = allPresets.find((c) => c.key === ev.target.value);
     if (!preset) return;
     const nextContext = presetToLdContext(preset);
     currentContext = nextContext;

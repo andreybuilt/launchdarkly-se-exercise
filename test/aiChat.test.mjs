@@ -22,8 +22,8 @@ import { createLdClient, TestData } from '../server/ldClient.mjs';
 import { toLdContext, findDemoContext } from '../server/contexts.mjs';
 import { createSupportChat, AI_CONFIG_KEY } from '../server/aiChat.mjs';
 
-const enterpriseContext = toLdContext(findDemoContext('demo-ana')); // plan: enterprise
-const freeContext = toLdContext(findDemoContext('demo-ben')); // plan: free
+const enterpriseContext = toLdContext(findDemoContext('demo-ana')); // organization.plan: enterprise
+const freeContext = toLdContext(findDemoContext('demo-ben')); // organization.plan: free
 
 // Mirrors what scripts/setup-ai-config.mjs provisions: two variations, the
 // small model for everyone by default, the large model for plan ==
@@ -78,7 +78,7 @@ describe('support chat AI Config (extra credit)', () => {
         .flag(AI_CONFIG_KEY)
         .variations(CONCISE_VALUE, DETAILED_VALUE)
         .fallthroughVariation(0) // concise-small by default
-        .ifMatch('user', 'plan', 'enterprise')
+        .ifMatch('organization', 'plan', 'enterprise')
         .thenReturn(1), // detailed-large for enterprise
     );
     client = await createLdClient({ updateProcessor: td.getFactory() });
@@ -204,7 +204,7 @@ describe('support chat AI Config (extra credit)', () => {
 
     const feedbackEvent = trackedEvents.find((e) => e.key === '$ld:ai:feedback:user:positive');
     assert.ok(feedbackEvent, 'expected positive feedback to be tracked');
-    assert.equal(feedbackEvent.context.key, enterpriseContext.key);
+    assert.equal(feedbackEvent.context.user.key, enterpriseContext.user.key);
   });
 
   test('feedback() falls back to an anonymous context when none is given', async () => {
@@ -243,5 +243,43 @@ describe('support chat AI Config (extra credit)', () => {
     });
     await chatWithoutKey.reply(freeContext, 'hi');
     assert.equal(headersWithoutKey.Authorization, undefined);
+  });
+});
+
+describe('AI Config fallback when LaunchDarkly cannot provide one', () => {
+  let client;
+
+  before(async () => {
+    // No flag named AI_CONFIG_KEY is ever defined on this TestData
+    // instance, so completionConfig() has nothing to resolve and falls
+    // back to the DEFAULT_AI_CONFIG passed in by server/aiChat.mjs, the
+    // same path taken if the SDK never finished initializing. That
+    // default's `enabled` is false on purpose (see the comment on
+    // DEFAULT_AI_CONFIG): LaunchDarkly being unreachable is not a safe
+    // moment to guess a system prompt.
+    const td = new TestData();
+    client = await createLdClient({ updateProcessor: td.getFactory() });
+  });
+
+  after(async () => {
+    await client.close();
+  });
+
+  test('reply() returns a clear "turned off" message and never calls the model', async () => {
+    let fetchCalled = false;
+    const chat = createSupportChat({
+      ldClient: client,
+      fetchImpl: async () => {
+        fetchCalled = true;
+        return { ok: true, status: 200, json: async () => ({ choices: [{ message: { content: 'should not happen' } }] }) };
+      },
+    });
+
+    const result = await chat.reply(freeContext, 'Are you there?');
+
+    assert.equal(result.enabled, false);
+    assert.equal(result.reply, 'Support chat is turned off right now.');
+    assert.equal(result.model, undefined);
+    assert.equal(fetchCalled, false, 'the model endpoint must not be called when the AI Config is disabled');
   });
 });

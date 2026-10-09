@@ -126,6 +126,7 @@ select {
   cursor: pointer;
 }
 .hero-cta:hover { filter: brightness(1.1); }
+.hero-cta:disabled { opacity: 0.7; cursor: default; }
 
 /* Support chat (extra credit: AI Configs) */
 .panel-wide { grid-column: 1 / -1; }

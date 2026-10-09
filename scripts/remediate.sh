@@ -12,30 +12,55 @@
 #
 # Usage:
 #   LD_TRIGGER_URL="https://app.launchdarkly.com/webhook/triggers/xxxxx" ./scripts/remediate.sh
+# or, to keep the URL off the command line entirely, save it to a file and
+# point LD_TRIGGER_URL_FILE at it (defaults to ./trigger_url):
+#   LD_TRIGGER_URL_FILE=./trigger_url ./scripts/remediate.sh
+# `npm run remediate` does the first form automatically from .env.
 #
 # The trigger URL comes from scripts/setup-launchdarkly.mjs's output
 # (ensureRemediationTrigger). Treat it like a secret: anyone who has the
 # URL can flip the flag, LaunchDarkly does not ask for further auth on
-# trigger invocation.
+# trigger invocation. It never appears as a command-line argument here
+# (anyone on the box could read it out of the process list with ps) and
+# this script never writes it, or the response it gets back, to /tmp.
 
 set -euo pipefail
 
-if [[ -z "${LD_TRIGGER_URL:-}" ]]; then
-  echo "LD_TRIGGER_URL is not set." >&2
-  echo "Run scripts/setup-launchdarkly.mjs first and copy the printed trigger URL, then:" >&2
+trigger_url="${LD_TRIGGER_URL:-}"
+
+if [[ -z "$trigger_url" ]]; then
+  trigger_file="${LD_TRIGGER_URL_FILE:-./trigger_url}"
+  if [[ -f "$trigger_file" ]]; then
+    trigger_url="$(cat "$trigger_file")"
+  fi
+fi
+
+if [[ -z "$trigger_url" ]]; then
+  echo "LD_TRIGGER_URL is not set, and no trigger file was found." >&2
+  echo "Run scripts/setup-launchdarkly.mjs first and either:" >&2
   echo '  LD_TRIGGER_URL="https://app.launchdarkly.com/webhook/triggers/xxxxx" ./scripts/remediate.sh' >&2
+  echo "or save the printed URL to the file named by LD_TRIGGER_URL_FILE (default ./trigger_url)." >&2
   exit 1
 fi
 
 echo "Firing LaunchDarkly trigger to turn OFF release-new-checkout-banner..."
 
-# Flag triggers are invoked with a plain POST, no request body or
-# authentication header required beyond the secret URL itself.
-http_status=$(curl -sS -o /tmp/ld-trigger-response.json -w '%{http_code}' -X POST "$LD_TRIGGER_URL")
+# curl --config - reads its options from stdin instead of argv, so the URL
+# never shows up in `ps`/process-list output the way
+# `curl -X POST "$trigger_url"` would. The config format is one directive
+# per line; "url" and "request" here are the only two needed. -w appends
+# the HTTP status after a newline so it can be split back out below,
+# avoiding a second file (or /tmp) just to hold the response body.
+response="$(curl -sS --config - -w $'\n%{http_code}' <<CURLCFG
+url = "$trigger_url"
+request = "POST"
+CURLCFG
+)"
+http_status="${response##*$'\n'}"
+body="${response%$'\n'*}"
 
 echo "HTTP status: $http_status"
-cat /tmp/ld-trigger-response.json 2>/dev/null || true
-echo
+echo "$body"
 
 if [[ "$http_status" -ge 200 && "$http_status" -lt 300 ]]; then
   echo "Trigger fired. The flag should now be off; the running app's browser tab"

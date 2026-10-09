@@ -4,3 +4,4 @@ public/bundle.js
 public/bundle.js.map
 *.log
 .DS_Store
+trigger_url

@@ -1,0 +1,14 @@
+node_modules
+.env
+.env.*
+!.env.example
+trigger_url
+.git
+.gitignore
+public/bundle.js
+public/bundle.js.map
+npm-debug.log
+*.log
+.DS_Store
+test
+docs

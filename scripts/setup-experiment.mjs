@@ -86,8 +86,8 @@ async function ensureExperiment() {
   // so use LD_MAINTAINER_ID if set, otherwise the account owner.
   let maintainerId = process.env.LD_MAINTAINER_ID;
   if (!maintainerId) {
-    const members = await api('GET', '/members?limit=50');
-    const owner = members?.items?.find((m) => m.role === 'owner') ?? members?.items?.[0];
+    const members = await api('GET', '/members?limit=100');
+    const owner = members?.items?.find((m) => m.role === 'owner');
     maintainerId = owner?._id;
   }
   if (!maintainerId) throw new Error('No maintainer found; set LD_MAINTAINER_ID to a member ID.');
@@ -124,6 +124,12 @@ async function ensureRunning(exp) {
   const status = fresh?.currentIteration?.status;
   if (status === 'running') {
     console.log('Experiment is running.');
+    return;
+  }
+  // A stopped iteration holds results someone may still be reading. Starting a
+  // new one is a decision, so it needs an explicit --restart.
+  if (status === 'stopped' && !process.argv.includes('--restart')) {
+    console.log('Experiment is stopped. Re-run with --restart to start a new iteration.');
     return;
   }
   await api('PATCH', `/projects/${PROJECT}/environments/${ENV}/experiments/${EXPERIMENT}`,

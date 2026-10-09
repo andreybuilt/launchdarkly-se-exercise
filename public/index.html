@@ -31,9 +31,13 @@
     <section class="panel">
       <h2>Context switcher</h2>
       <p class="hint">
-        Pick a preset demo user. This calls LaunchDarkly's
-        <code>identify()</code> with a new context, so targeting
-        (individual target and rule-based target) re-evaluates live.
+        Pick a preset demo user, or "New visitor" for a freshly generated
+        context that is not one of the demo- keys. Each preset is a
+        multi-context: a <code>user</code> kind for the person and an
+        <code>organization</code> kind for the account they belong to. This
+        calls LaunchDarkly's <code>identify()</code> with the new context,
+        so targeting (individual target and rule-based target) re-evaluates
+        live.
       </p>
       <label for="context-select">Demo user</label>
       <select id="context-select"></select>

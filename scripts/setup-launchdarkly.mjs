@@ -3,8 +3,8 @@
 //
 // Creates everything Parts 1 and 2 need in your LaunchDarkly project, using
 // the REST API v2 (https://launchdarkly.com/docs/api). Safe to re-run: each
-// piece is checked on its own and only what is missing is added, so a
-// half-configured project is completed rather than skipped.
+// piece is compared with the desired state and only what differs is changed,
+// so a half-configured or outdated project is brought up to date.
 //
 //   1. Flag "release-new-checkout-banner" (boolean, starts OFF), available to
 //      client-side SDKs.
@@ -12,11 +12,12 @@
 //      to client-side SDKs, ON in the environment.
 //   3. Individual target: context key "demo-eli" gets "redesign".
 //   4. Rules, in this order:
-//        plan is "enterprise"      -> redesign
-//        betaTester is true        -> redesign
-//        key starts with "demo-"   -> control   (keeps the five demo users out
-//                                                of the experiment, so the
-//                                                demo is predictable)
+//        organization plan is "enterprise"  -> redesign
+//        user betaTester is true             -> redesign
+//        user key starts with "demo-"        -> control  (keeps the demo users
+//                                                         out of the experiment,
+//                                                         so the demo is
+//                                                         predictable)
 //      Everyone else falls through to the default rule, which is where the
 //      experiment (scripts/setup-experiment.mjs) runs.
 //   5. A flag trigger on the banner flag whose only action is "turn the flag
@@ -120,20 +121,32 @@ async function ensureFlag({ key, name, description, values, defaults, temporary,
   return flag;
 }
 
-// A rule is identified by its single clause, so re-runs can tell which of the
-// three rules are already present.
-const clauseSignature = (c) => `${c.attribute}|${c.op}|${JSON.stringify(c.values)}`;
+// Desired rules, in order. A rule's clauses are AND'ed, so "enterprise OR beta
+// tester" is two rules serving the same variation. Plan lives on the
+// organization context, beta-tester status on the user. The demo-user rule is
+// last: Ana and Dana are enterprise and must match the enterprise rule first.
+const DESIRED_RULES = [
+  { contextKind: 'organization', attribute: 'plan', op: 'in', values: ['enterprise'],
+    serve: 'redesign', description: 'Enterprise organizations get the redesign' },
+  { contextKind: 'user', attribute: 'betaTester', op: 'in', values: [true],
+    serve: 'redesign', description: 'Beta testers get the redesign' },
+  { contextKind: 'user', attribute: 'key', op: 'startsWith', values: [DEMO_KEY_PREFIX],
+    serve: 'control', description: 'Demo users stay on control (not in the experiment)' },
+];
+
+const ruleSignature = (contextKind, attribute, op, values, variationIndex) =>
+  `${contextKind || 'user'}|${attribute}|${op}|${JSON.stringify(values)}|${variationIndex}`;
 
 async function ensureHeroTargeting(flag) {
   const env = flag.environments[ENV_KEY];
-  const variationId = (value) => flag.variations.find((v) => v.value === value)._id;
-  const redesignIndex = flag.variations.findIndex((v) => v.value === 'redesign');
+  const index = (value) => flag.variations.findIndex((v) => v.value === value);
+  const variationId = (value) => flag.variations[index(value)]._id;
   const instructions = [];
 
-  // 1. Individual target. User targets appear in "targets" (and other context
+  // 1. Individual target. User targets appear in "targets" (other context
   //    kinds in "contextTargets"), so look in both.
   const targeted = [...(env.targets || []), ...(env.contextTargets || [])].some(
-    (t) => t.variation === redesignIndex && (t.values || []).includes(INDIVIDUAL_TARGET_KEY),
+    (t) => t.variation === index('redesign') && (t.values || []).includes(INDIVIDUAL_TARGET_KEY),
   );
   if (!targeted) {
     instructions.push({
@@ -144,30 +157,25 @@ async function ensureHeroTargeting(flag) {
     });
   }
 
-  // 2. Rules. A rule's clauses are AND'ed, so "enterprise OR beta tester" is two
-  //    rules serving the same variation. The demo-user rule must come last:
-  //    Ana and Dana are enterprise and must match the enterprise rule first.
-  const wanted = [
-    { clause: { attribute: 'plan', op: 'in', values: ['enterprise'] }, serve: 'redesign',
-      description: 'Enterprise accounts get the redesign' },
-    { clause: { attribute: 'betaTester', op: 'in', values: [true] }, serve: 'redesign',
-      description: 'Beta testers get the redesign' },
-    { clause: { attribute: 'key', op: 'startsWith', values: [DEMO_KEY_PREFIX] }, serve: 'control',
-      description: 'Demo users stay on control (not in the experiment)' },
-  ];
-  const existing = new Map(
-    (env.rules || []).flatMap((r) => r.clauses.map((c) => [clauseSignature(c), r])),
+  // 2. Rules: compare the whole ordered list (clause, context kind, served
+  //    variation). Any difference, including an older rule shape, is replaced
+  //    with the desired list in one instruction.
+  const current = (env.rules || []).map((r) =>
+    r.clauses.length === 1
+      ? ruleSignature(r.clauses[0].contextKind, r.clauses[0].attribute, r.clauses[0].op, r.clauses[0].values, r.variation)
+      : `multi-clause:${r._id}`,
   );
-  const demoRule = existing.get(clauseSignature(wanted[2].clause));
-  for (const [i, w] of wanted.entries()) {
-    if (existing.has(clauseSignature(w.clause))) continue;
+  const desired = DESIRED_RULES.map((r) =>
+    ruleSignature(r.contextKind, r.attribute, r.op, r.values, index(r.serve)),
+  );
+  if (JSON.stringify(current) !== JSON.stringify(desired)) {
     instructions.push({
-      kind: 'addRule',
-      description: w.description,
-      clauses: [{ contextKind: 'user', negate: false, ...w.clause }],
-      variationId: variationId(w.serve),
-      // Keep the demo rule last if it already exists.
-      ...(i < 2 && demoRule ? { beforeRuleId: demoRule._id } : {}),
+      kind: 'replaceRules',
+      rules: DESIRED_RULES.map((r) => ({
+        description: r.description,
+        clauses: [{ contextKind: r.contextKind, attribute: r.attribute, op: r.op, values: r.values, negate: false }],
+        variationId: variationId(r.serve),
+      })),
     });
   }
 
@@ -176,10 +184,10 @@ async function ensureHeroTargeting(flag) {
   if (!env.on) instructions.push({ kind: 'turnFlagOn' });
 
   if (instructions.length === 0) {
-    console.log(`Targeting on "${FLAG_HERO_REDESIGN}" is already complete.`);
+    console.log(`Targeting on "${FLAG_HERO_REDESIGN}" is already as expected.`);
     return;
   }
-  console.log(`Adding ${instructions.map((x) => x.kind).join(', ')} on "${FLAG_HERO_REDESIGN}"...`);
+  console.log(`Applying ${instructions.map((x) => x.kind).join(', ')} on "${FLAG_HERO_REDESIGN}"...`);
   await ldApi(
     'PATCH',
     `/flags/${PROJECT_KEY}/${FLAG_HERO_REDESIGN}`,
