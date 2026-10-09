@@ -31,7 +31,9 @@
 //   LD_TRIGGER_URL_FILE  optional: write the trigger URL to this file (mode
 //                        600) instead of printing it, for shared screens.
 //
-// Usage: node scripts/setup-launchdarkly.mjs   (or: npm run setup:ld)
+// Usage: npm run setup:ld
+//        npm run setup:ld -- --reset-demo   (also reset the banner flag to the
+//                                            demo's starting state, see below)
 
 import { writeFileSync } from 'node:fs';
 
@@ -232,9 +234,35 @@ async function ensureRemediationTrigger() {
   console.log('Use it as LD_TRIGGER_URL for scripts/remediate.sh.');
 }
 
+// --reset-demo puts the banner flag back to the demo's starting point: OFF,
+// with its default rule serving the new banner, so "turn it on" releases the
+// new banner again. Run it after the guarded rollout demo has finished; it is
+// opt-in because a normal re-run must never undo a release in progress.
+async function resetBannerForDemo(flag) {
+  const env = flag.environments[ENV_KEY];
+  const newBanner = flag.variations.find((v) => v.value === true);
+  const newIndex = flag.variations.indexOf(newBanner);
+  const instructions = [];
+  if (env.on) instructions.push({ kind: 'turnFlagOff' });
+  if (env.fallthrough?.variation !== newIndex) {
+    instructions.push({ kind: 'updateFallthroughVariationOrRollout', variationId: newBanner._id });
+  }
+  if (instructions.length === 0) {
+    console.log(`"${FLAG_RELEASE_BANNER}" is already OFF with the new banner as its default.`);
+    return;
+  }
+  console.log(`Resetting "${FLAG_RELEASE_BANNER}" for the demo: ${instructions.map((x) => x.kind).join(', ')}...`);
+  await ldApi(
+    'PATCH',
+    `/flags/${PROJECT_KEY}/${FLAG_RELEASE_BANNER}`,
+    { environmentKey: ENV_KEY, comment: 'Reset for the demo (setup-launchdarkly.mjs --reset-demo)', instructions },
+    { semantic: true },
+  );
+}
+
 async function main() {
   console.log(`Project "${PROJECT_KEY}", environment "${ENV_KEY}"`);
-  await ensureFlag({
+  const banner = await ensureFlag({
     key: FLAG_RELEASE_BANNER,
     name: 'Release: new checkout banner',
     description: 'Wraps the new Fall Launch checkout banner. Part 1: release, rollback, remediation.',
@@ -254,6 +282,7 @@ async function main() {
   });
   await ensureHeroTargeting(hero);
   await ensureRemediationTrigger();
+  if (process.argv.includes('--reset-demo')) await resetBannerForDemo(banner);
   console.log('Done.');
 }
 

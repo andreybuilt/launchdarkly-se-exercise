@@ -107,6 +107,11 @@ async function main() {
   const supportChat = createSupportChat({ ldClient });
   const checkout = createCheckout({ ldClient, isRegressionOn: () => checkoutRegressionOn });
   const chatRequestLimiter = createChatRequestLimiter();
+  // Checkout events feed the guarded rollout's metric, so they are rate
+  // limited too: an open endpoint could otherwise flood the metric. (A real
+  // checkout would record the outcome from trusted server state, not from a
+  // request a browser can repeat.)
+  const checkoutRequestLimiter = createChatRequestLimiter({ maxPerWindow: 30, maxConcurrent: 5 });
 
   app.use(express.static(PUBLIC_DIR));
   // Small limit: chat messages are capped at 500 chars (validated below),
@@ -257,7 +262,7 @@ async function main() {
   // checkout-completed or checkout-error accordingly. The browser never
   // decides success or failure itself, so the demo stays honest about
   // what LaunchDarkly is actually measuring.
-  app.post('/api/checkout', async (req, res) => {
+  app.post('/api/checkout', checkoutRequestLimiter, async (req, res) => {
     const { user } = req.body ?? {};
     const context = resolveLdContext(user);
     if (!context) {
@@ -274,10 +279,12 @@ async function main() {
   // guarded rollout demo, as an alternative to restarting the server with
   // CHECKOUT_REGRESSION=on. Protected behind DEMO_CONTROLS=on in the
   // environment so this route is inert (404) unless the operator has
-  // deliberately opted in; it is not something a page visitor should ever
-  // be able to flip.
+  // deliberately opted in, and even then it only answers requests from the
+  // machine the server runs on (curl on the presenter's laptop), never a
+  // page visitor.
   app.post('/api/demo/regression', (req, res) => {
-    if (process.env.DEMO_CONTROLS !== 'on') {
+    const fromLocalhost = ['127.0.0.1', '::1', '::ffff:127.0.0.1'].includes(req.socket.remoteAddress);
+    if (process.env.DEMO_CONTROLS !== 'on' || !fromLocalhost) {
       res.status(404).json({ error: 'not found' });
       return;
     }

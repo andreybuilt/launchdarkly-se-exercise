@@ -151,8 +151,14 @@ describe('landing-hero-redesign (Part 2: individual + rule based targeting, mult
       const visitorKey = generateVisitorKey();
       const context = toVisitorLdContext(visitorKey);
 
-      const value = await client.variation(FLAG_HERO_REDESIGN, context, 'control');
-      assert.ok(['control', 'redesign'].includes(value));
+      // The evaluation reason says which part of the targeting decided: a
+      // visitor must reach the default rule (FALLTHROUGH), not a target or rule.
+      const detail = await client.variationDetail(FLAG_HERO_REDESIGN, context, 'control');
+      assert.equal(detail.reason.kind, 'FALLTHROUGH');
+
+      // Control: a demo user is decided by a rule, never the default rule.
+      const demo = await client.variationDetail(FLAG_HERO_REDESIGN, plainUser, 'control');
+      assert.equal(demo.reason.kind, 'RULE_MATCH');
     });
   });
 });

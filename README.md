@@ -281,8 +281,10 @@ between old and new, and rolls back on its own if the new one is worse.
   SDK's `track()`.
 - **The regression:** start the server with `CHECKOUT_REGRESSION=on` and the new
   banner's checkouts fail 40% of the time. With `DEMO_CONTROLS=on` you can flip
-  it at runtime with `POST /api/demo/regression {"on": true}` (otherwise that
-  route returns 404).
+  it at runtime with `POST /api/demo/regression {"on": true}`, from the machine
+  the server runs on only (anything else, or without the setting, gets 404; in
+  Docker use the environment variable instead). `/api/checkout` is rate limited
+  so it cannot be used to flood the metric.
 - **Automated:** `npm run setup:guarded` creates the metric "Checkout error rate"
   (`checkout-error`, lower is better) and prints the UI steps.
   `npm run simulate:checkout` sends labelled simulated visitors through the flag
@@ -297,8 +299,10 @@ between old and new, and rolls back on its own if the new one is worse.
   and the automatic rollback when the regression is on.
 
 Run it as its own demo, after Parts 1 and 2: the guarded rollout changes the
-banner flag's default rule. When it is over, set the default rule back to the
-new banner so Part 1's on/off toggle behaves as described.
+banner flag's default rule. When it is over, `npm run setup:ld -- --reset-demo`
+puts the flag back (OFF, default rule serving the new banner) so Part 1's
+on/off toggle behaves as described. A plain re-run never does this, so it
+cannot undo a release in progress.
 
 **Status:** the metric, the checkout signal and the simulator were run against
 the trial account. The UI step and the automatic rollback have not been
