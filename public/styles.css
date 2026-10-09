@@ -1,0 +1,209 @@
+/* public/styles.css - plain CSS, no framework, kept simple on purpose */
+
+:root {
+  --ink: #1b1f23;
+  --muted: #5b6470;
+  --border: #d8dde3;
+  --brand: #2f5496;
+  --ok: #1f7a4d;
+  --error: #b3261e;
+  --bg-panel: #f7f8fa;
+}
+
+* { box-sizing: border-box; }
+
+body {
+  margin: 0;
+  font-family: -apple-system, Segoe UI, Roboto, Helvetica, Arial, sans-serif;
+  color: var(--ink);
+  background: #ffffff;
+}
+
+.site-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 16px 32px;
+  border-bottom: 1px solid var(--border);
+}
+
+.brand {
+  font-weight: 700;
+  font-size: 20px;
+  color: var(--brand);
+}
+
+.site-header nav a {
+  margin-left: 24px;
+  color: var(--ink);
+  text-decoration: none;
+}
+
+/* Banners (Part 1) */
+.banner {
+  padding: 14px 32px;
+  font-size: 15px;
+}
+.banner-new {
+  background: #eaf1fb;
+  color: var(--brand);
+  border-bottom: 1px solid var(--border);
+}
+.banner-old {
+  background: var(--bg-panel);
+  color: var(--muted);
+  border-bottom: 1px solid var(--border);
+}
+
+/* Hero (Part 2) */
+.hero {
+  padding: 48px 32px;
+  text-align: center;
+}
+.hero h1 { margin: 0 0 8px; font-size: 32px; }
+.hero p { margin: 0; color: var(--muted); }
+.hero-redesign { background: linear-gradient(180deg, #eef3fb, #ffffff); }
+.hero-control { background: #ffffff; }
+
+.layout {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+  gap: 20px;
+  padding: 24px 32px;
+}
+
+.panel {
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 16px 20px;
+  background: var(--bg-panel);
+}
+.panel h2 { margin-top: 0; font-size: 16px; }
+.panel h3 { font-size: 13px; color: var(--muted); margin-bottom: 4px; }
+.hint { color: var(--muted); font-size: 13px; }
+
+select, label {
+  display: block;
+  width: 100%;
+  margin-bottom: 4px;
+}
+select {
+  padding: 8px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+}
+
+.code-block {
+  background: #1b1f23;
+  color: #e6e6e6;
+  padding: 10px 12px;
+  border-radius: 6px;
+  font-size: 12px;
+  overflow-x: auto;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.status { font-size: 13px; color: var(--ok); }
+.status-error { color: var(--error); }
+
+.site-footer {
+  padding: 16px 32px;
+  color: var(--muted);
+  font-size: 12px;
+  border-top: 1px solid var(--border);
+}
+
+/* Hero call-to-action: the experiment's conversion event (hero-cta-click). */
+.hero-cta {
+  margin-top: 16px;
+  padding: 10px 20px;
+  border: 0;
+  border-radius: 6px;
+  background: var(--brand);
+  color: #fff;
+  font-size: 15px;
+  cursor: pointer;
+}
+.hero-cta:hover { filter: brightness(1.1); }
+
+/* Support chat (extra credit: AI Configs) */
+.panel-wide { grid-column: 1 / -1; }
+
+.chat-log {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  max-height: 280px;
+  overflow-y: auto;
+  padding: 4px 0 12px;
+}
+
+.chat-message {
+  padding: 8px 12px;
+  border-radius: 6px;
+  font-size: 14px;
+  max-width: 80%;
+}
+.chat-message-user {
+  align-self: flex-end;
+  background: var(--brand);
+  color: #fff;
+}
+.chat-message-assistant {
+  align-self: flex-start;
+  background: #ffffff;
+  border: 1px solid var(--border);
+}
+.chat-message-error {
+  align-self: flex-start;
+  background: #fbeceb;
+  border: 1px solid var(--error);
+  color: var(--error);
+}
+
+.chat-meta {
+  font-size: 11px;
+  color: var(--muted);
+  margin-top: 4px;
+}
+
+.chat-feedback {
+  margin-top: 6px;
+  display: flex;
+  gap: 6px;
+}
+.chat-feedback button {
+  border: 1px solid var(--border);
+  background: #fff;
+  border-radius: 4px;
+  padding: 2px 8px;
+  cursor: pointer;
+  font-size: 13px;
+}
+.chat-feedback button:hover { background: var(--bg-panel); }
+.chat-feedback button.feedback-sent {
+  border-color: var(--ok);
+  color: var(--ok);
+}
+
+.chat-form {
+  display: flex;
+  gap: 8px;
+}
+.chat-form input {
+  flex: 1;
+  padding: 8px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+}
+.chat-form button {
+  padding: 8px 16px;
+  border: 0;
+  border-radius: 6px;
+  background: var(--brand);
+  color: #fff;
+  cursor: pointer;
+}
+.chat-form button:hover { filter: brightness(1.1); }
+.chat-form button:disabled { opacity: 0.6; cursor: default; }

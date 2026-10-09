@@ -1,0 +1,29 @@
+{
+  "name": "abc-company-ld-demo",
+  "version": "1.0.0",
+  "description": "ABC Company sample app for a LaunchDarkly Solutions Engineer take home: feature flags, targeting, and remediation via trigger.",
+  "type": "module",
+  "private": true,
+  "scripts": {
+    "build:client": "node scripts/build-client.mjs",
+    "start": "npm run build:client && node --env-file-if-exists=.env server/index.mjs",
+    "dev": "npm run build:client && node --watch --env-file-if-exists=.env server/index.mjs",
+    "test": "node --test test/*.test.mjs",
+    "setup:ld": "node --env-file-if-exists=.env scripts/setup-launchdarkly.mjs",
+    "setup:experiment": "node --env-file-if-exists=.env scripts/setup-experiment.mjs",
+    "setup:ai": "node --env-file-if-exists=.env scripts/setup-ai-config.mjs",
+    "simulate": "node --env-file-if-exists=.env scripts/simulate-traffic.mjs"
+  },
+  "dependencies": {
+    "@launchdarkly/js-client-sdk": "^4.0.0",
+    "@launchdarkly/node-server-sdk": "^9.7.0",
+    "@launchdarkly/server-sdk-ai": "^2.0.13",
+    "express": "^4.19.2"
+  },
+  "devDependencies": {
+    "esbuild": "^0.23.0"
+  },
+  "engines": {
+    "node": ">=20"
+  }
+}

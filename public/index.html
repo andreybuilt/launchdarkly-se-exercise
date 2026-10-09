@@ -1,0 +1,100 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <title>ABC Company</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <link rel="stylesheet" href="/styles.css" />
+</head>
+<body>
+  <header class="site-header">
+    <div class="brand">ABC Company</div>
+    <nav>
+      <a href="#">Products</a>
+      <a href="#">Pricing</a>
+      <a href="#">Support</a>
+    </nav>
+  </header>
+
+  <!-- Part 1: banner-slot is driven entirely by release-new-checkout-banner.
+       The old/new banner swap happens here with no page reload, via the
+       client.on('change:release-new-checkout-banner', ...) listener in
+       src/client.mjs. -->
+  <div id="banner-slot"></div>
+
+  <!-- Part 2: hero-slot is driven by landing-hero-redesign, which is
+       targeted by context (individual target + rule, see
+       scripts/setup-launchdarkly.mjs). -->
+  <div id="hero-slot"></div>
+
+  <main class="layout">
+    <section class="panel">
+      <h2>Context switcher</h2>
+      <p class="hint">
+        Pick a preset demo user. This calls LaunchDarkly's
+        <code>identify()</code> with a new context, so targeting
+        (individual target and rule-based target) re-evaluates live.
+      </p>
+      <label for="context-select">Demo user</label>
+      <select id="context-select"></select>
+      <p id="connection-status" class="status"></p>
+    </section>
+
+    <section class="panel">
+      <h2>Under the hood</h2>
+      <p class="hint">What the SDK currently resolves for this context.</p>
+      <h3>Current context</h3>
+      <pre id="context-json" class="code-block"></pre>
+      <h3>Current flag values</h3>
+      <pre id="flags-json" class="code-block"></pre>
+    </section>
+
+    <section class="panel panel-wide">
+      <h2>Support chat (extra credit: AI Configs)</h2>
+      <p class="hint">
+        Prompt and model come from the LaunchDarkly AI Config
+        <code>support-chat</code>, resolved server-side per context (see
+        <code>server/aiChat.mjs</code>). Switch the demo user above, ask the
+        same question, and watch the variation/model line change, or edit
+        the AI Config's prompt in the LaunchDarkly UI and ask again, no
+        redeploy.
+      </p>
+      <div id="chat-log" class="chat-log"></div>
+      <form id="chat-form" class="chat-form">
+        <input
+          id="chat-input"
+          type="text"
+          maxlength="500"
+          placeholder="Ask the support assistant something..."
+          autocomplete="off"
+        />
+        <button type="submit">Send</button>
+      </form>
+    </section>
+
+    <section class="panel">
+      <h2>Remediation (Part 1)</h2>
+      <p class="hint">
+        Fire the flag trigger created by <code>scripts/setup-launchdarkly.mjs</code>
+        to simulate a monitoring alert turning the checkout banner back off,
+        without touching the LaunchDarkly UI:
+      </p>
+      <pre class="code-block">LD_TRIGGER_URL="https://app.launchdarkly.com/webhook/triggers/..." \
+  ./scripts/remediate.sh</pre>
+      <p class="hint">Watch the banner above flip back instantly, same listener, no reload.</p>
+    </section>
+  </main>
+
+  <footer class="site-footer">
+    <p>ABC Company sample app, built for a LaunchDarkly Solutions Engineer take home exercise.</p>
+  </footer>
+
+  <!-- /config.js injects window.__LD_CLIENT_SIDE_ID__,
+       window.__DEMO_CONTEXTS__ and window.__LD_BOOTSTRAP__ before the
+       bundle runs. The client-side ID is never hard-coded in bundle.js,
+       and the bootstrap flag state lets the first paint show the right
+       banner/hero with no flicker. See server/index.mjs. -->
+  <script src="/config.js"></script>
+  <script src="/bundle.js"></script>
+</body>
+</html>
