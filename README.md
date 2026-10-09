@@ -270,5 +270,5 @@ test/                          offline tests
 
 ## About this build
 
-Designed by AndreyBuilt.ai; implemented with AI coding agents working to that
-design, and verified end to end against a live LaunchDarkly trial.
+Designed by Andrey Shkanov (AndreyBuilt.ai); implemented with AI coding agents
+working to that design, and verified end to end against a live LaunchDarkly trial.
