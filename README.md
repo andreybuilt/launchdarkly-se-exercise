@@ -10,12 +10,18 @@ concept in the exercise is something you can see happen on the page.
 |---|---|
 | Release a feature behind a flag, roll it back | The checkout banner switches between old and new copy |
 | Instant release and rollback, no reload | A `change` listener in the browser SDK swaps it live |
-| Remediate with a trigger | `scripts/remediate.sh` (curl) turns the feature off, the page updates |
+| Remediate with a trigger | `npm run remediate` (curl) turns the feature off, the page updates |
+| Bonus: remediation with no human | A guarded rollout watches checkout errors and rolls back on its own |
 | Context attributes, individual and rule-based targeting | The hero changes when you switch the demo user (a user + organization multi-context) |
 | Extra credit: Experimentation | A running experiment on the hero, measured on CTA clicks |
 | Extra credit: AI Configs | A support chat whose prompt, model and model settings come from LaunchDarkly |
 
 Everything below was run end to end against a live LaunchDarkly trial account.
+
+![Release, then remediation by trigger, in an open tab with no reload](docs/images/release-and-remediate.gif)
+
+*Above: the banner flag is turned on in LaunchDarkly, then a trigger turns it
+off again. The page never reloads.*
 
 ---
 
@@ -134,6 +140,8 @@ Release it to the people who should see it first, prove it, then widen it.
 - **Everyone else** falls through to the default rule, which is where the
   redesign is measured (see Experimentation).
 
+![The page as Ana: redesign hero, the multi-context and flag values under the hood](docs/images/01-page-ana.png)
+
 On the page, the **context switcher** calls `client.identify()` with the chosen
 user; the SDK re-evaluates and the hero changes with no reload. The **Under the
 hood** panel shows the active context and both flag values. The server evaluates
@@ -193,6 +201,29 @@ npm run simulate -- 3000 20   # 3,000 visitors at 20 per minute
 
 Results: LaunchDarkly > Experiments > "Hero redesign: CTA conversion".
 
+**Readout of the trial run (3,000 simulated visitors, 2026-10-09).**
+
+| | Visitors | CTA clicks | Rate |
+|---|---|---|---|
+| Control | 1,495 | 108 | 7.2% |
+| Redesign | 1,505 | 170 | 11.3% |
+
+- **Traffic split** 49.8% to 50.2%: no sample ratio mismatch, so the allocation
+  worked as configured.
+- **Probability that the redesign beats control:** above 99.9%.
+- **Relative lift:** about 56%, with a 90% credible interval of roughly 29% to
+  90%.
+- **Sanity check:** the simulator's assumed true lift is 37.5% (11% against
+  8%). It sits inside the interval, so the experiment recovered a known effect
+  from noisy data, which is what this run can prove.
+- **Decision, as the product manager:** roll the redesign out to everyone and
+  clean up the flag. With real traffic I would also watch a guardrail metric
+  (for example bounce rate or checkout errors) before calling it.
+
+These figures are computed from the simulator's own record of what it sent,
+using the same Bayesian approach with uniform priors. LaunchDarkly's results
+page for the experiment shows its own analysis of the same events.
+
 ## Extra credit: AI Configs
 
 **Scenario.** As the AI product manager for a support chatbot, change prompts and
@@ -218,6 +249,8 @@ models quickly and see which works best, without waiting for a deploy.
   hard-coded model. `POST /api/chat` is limited to 10 requests a minute per
   client and two model calls at a time.
 
+![The same question as Ben (concise, small model) and as Ana (detailed, large model)](docs/images/04-chat.png)
+
 **Why the model settings matter.** On the trial account the large model first
 took about 13 seconds per answer: it was generating hidden reasoning tokens.
 Setting `reasoning_effort: none` on that variation in LaunchDarkly brought it to
@@ -235,6 +268,41 @@ Providers with a different API need an adapter in `server/aiChat.mjs`.
 Try it: ask "How do I reset my password?" as Ben, then as Ana. Then edit
 `concise-small`'s prompt in LaunchDarkly (for example "Always sign off as the
 ABC Company team.") and ask again as Ben.
+
+## Extra credit: guarded rollout (automatic remediation)
+
+**Scenario.** Part 1's trigger needs something to call it. A guarded rollout
+needs nothing: LaunchDarkly ramps the new banner up in steps, compares a metric
+between old and new, and rolls back on its own if the new one is worse.
+
+- **The signal:** only the new banner has a "Check out now" button. It calls
+  `POST /api/checkout`, which evaluates `release-new-checkout-banner` for the
+  visitor and records `checkout-completed` or `checkout-error` with the server
+  SDK's `track()`.
+- **The regression:** start the server with `CHECKOUT_REGRESSION=on` and the new
+  banner's checkouts fail 40% of the time. With `DEMO_CONTROLS=on` you can flip
+  it at runtime with `POST /api/demo/regression {"on": true}` (otherwise that
+  route returns 404).
+- **Automated:** `npm run setup:guarded` creates the metric "Checkout error rate"
+  (`checkout-error`, lower is better) and prints the UI steps.
+  `npm run simulate:checkout` sends labelled simulated visitors through the flag
+  (assumed error rates: 2% normally, 30% on the new banner with `-- --regression`)
+  so the rollout has traffic to measure.
+- **The one UI step:** starting the rollout. Open the flag in `test`, make sure
+  it is ON with the default rule serving the old banner, set Serve to
+  **Guarded rollout** on the new banner, metric "Checkout error rate" with
+  automatic rollback, randomization unit `user`, shortest schedule. The REST API
+  documents no single-flag call for this, so it is done in the UI.
+- **Watch:** the flag's Monitoring tab: the ramp, the error rate per variation,
+  and the automatic rollback when the regression is on.
+
+Run it as its own demo, after Parts 1 and 2: the guarded rollout changes the
+banner flag's default rule. When it is over, set the default rule back to the
+new banner so Part 1's on/off toggle behaves as described.
+
+**Status:** the metric, the checkout signal and the simulator were run against
+the trial account. The UI step and the automatic rollback have not been
+exercised yet; this line will change when they have.
 
 ---
 
@@ -303,6 +371,9 @@ scripts/setup-experiment.mjs   metric and experiment, started (REST API, idempot
 scripts/setup-ai-config.mjs    model configs, AI Config, variations, targeting (REST API, idempotent)
 scripts/simulate-traffic.mjs   labelled simulated visitors for the experiment
 scripts/remediate.sh           fires the remediation trigger
+scripts/setup-guarded-rollout.mjs  checkout-error metric, prints the guarded rollout UI steps
+scripts/simulate-checkout.mjs  labelled simulated checkouts for the guarded rollout
+server/checkout.mjs            the checkout signal (and the injectable regression)
 scripts/build-client.mjs       esbuild bundle step (runs on npm start)
 test/                          offline tests
 docs/ARCHITECTURE.md           diagram, request flow, what changes for production

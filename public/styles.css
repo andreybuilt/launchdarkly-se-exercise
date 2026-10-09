@@ -55,6 +55,28 @@ body {
   border-bottom: 1px solid var(--border);
 }
 
+/* Checkout button (extra credit: guarded rollout). Only ever rendered on
+   the new banner, see src/client.mjs renderBanner(). */
+.checkout-button {
+  margin-left: 12px;
+  padding: 6px 14px;
+  border: 0;
+  border-radius: 6px;
+  background: var(--brand);
+  color: #fff;
+  font-size: 14px;
+  cursor: pointer;
+}
+.checkout-button:hover { filter: brightness(1.1); }
+.checkout-button:disabled { opacity: 0.7; cursor: default; }
+
+.checkout-result {
+  margin-left: 10px;
+  font-size: 13px;
+}
+.checkout-result.checkout-ok { color: var(--ok); }
+.checkout-result.checkout-error { color: var(--error); }
+
 /* Hero (Part 2) */
 .hero {
   padding: 48px 32px;
@@ -67,7 +89,8 @@ body {
 
 .layout {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+  grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+  align-items: start;
   gap: 20px;
   padding: 24px 32px;
 }

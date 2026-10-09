@@ -12,7 +12,9 @@
     "setup:ld": "node --env-file-if-exists=.env scripts/setup-launchdarkly.mjs",
     "setup:experiment": "node --env-file-if-exists=.env scripts/setup-experiment.mjs",
     "setup:ai": "node --env-file-if-exists=.env scripts/setup-ai-config.mjs",
+    "setup:guarded": "node --env-file-if-exists=.env scripts/setup-guarded-rollout.mjs",
     "simulate": "node --env-file-if-exists=.env scripts/simulate-traffic.mjs",
+    "simulate:checkout": "node --env-file-if-exists=.env scripts/simulate-checkout.mjs",
     "remediate": "set -a; [ -f .env ] && . ./.env; set +a; ./scripts/remediate.sh"
   },
   "dependencies": {

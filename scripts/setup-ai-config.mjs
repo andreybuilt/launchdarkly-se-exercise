@@ -41,7 +41,7 @@ const VARIATIONS = [
     model: { modelName: 'gemma4:e4b', parameters: {} },
     prompt:
       'You are a concise support assistant for {{companyName}}. Answer {{userName}} in at ' +
-      'most two sentences. Be friendly but brief.',
+      'most two sentences. Be friendly but brief. Reply in plain text, no Markdown.',
   },
   {
     key: 'detailed-large',
@@ -53,7 +53,7 @@ const VARIATIONS = [
     prompt:
       'You are a thorough support assistant for {{companyName}}. Answer {{userName}} step by ' +
       'step, and mention that their account is on the {{plan}} plan where it is relevant to the ' +
-      'answer. Keep the whole answer to at most 120 words.',
+      'answer. Keep the whole answer to at most 120 words. Reply in plain text, no Markdown.',
   },
 ];
 

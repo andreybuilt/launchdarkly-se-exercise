@@ -107,6 +107,13 @@ const chatInputEl = document.getElementById('chat-input');
 
 // ---- Render helpers ---------------------------------------------------
 
+// Extra credit: guarded rollout. Only the NEW banner carries a checkout
+// button; the old banner has none, matching the brief exactly, and its
+// checkouts are only ever simulated by scripts/simulate-checkout.mjs, not
+// by anything in this browser code. Clicking calls POST /api/checkout,
+// which evaluates release-new-checkout-banner server-side (the same flag
+// this banner itself is driven by) and reports success or failure; the
+// browser never decides the outcome, it only shows what the server said.
 function renderBanner(isOn) {
   if (isOn) {
     // The new "Fall Launch" checkout banner (Part 1: the new feature
@@ -115,6 +122,8 @@ function renderBanner(isOn) {
       <div class="banner banner-new">
         <strong>Fall Launch:</strong> Checkout just got faster. Save your cart
         across devices and check out in one click. <em>(new banner, flag ON)</em>
+        <button type="button" id="checkout-button" class="checkout-button">Check out now</button>
+        <span id="checkout-result" class="checkout-result"></span>
       </div>`;
   } else {
     bannerSlot.innerHTML = `
@@ -122,6 +131,49 @@ function renderBanner(isOn) {
         Thanks for shopping with ABC Company. <em>(old banner, flag OFF)</em>
       </div>`;
   }
+}
+
+// Wired up fresh every time renderBanner() puts the button back in the
+// DOM (a change:release-new-checkout-banner event, or a context switch,
+// both call renderBanner() again), since innerHTML replacement drops any
+// previous listener along with the old button element.
+function wireCheckoutButton(presetKeyGetter) {
+  const button = document.getElementById('checkout-button');
+  const resultEl = document.getElementById('checkout-result');
+  if (!button) return;
+
+  button.addEventListener('click', async () => {
+    button.disabled = true;
+    button.textContent = 'Checking out...';
+    resultEl.textContent = '';
+    resultEl.className = 'checkout-result';
+
+    try {
+      const res = await fetch('/api/checkout', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ user: presetKeyGetter() }),
+      });
+      const data = await res.json();
+
+      if (!res.ok) {
+        resultEl.textContent = data.error ?? 'Checkout failed.';
+        resultEl.classList.add('checkout-error');
+      } else if (data.ok) {
+        resultEl.textContent = 'Checkout complete.';
+        resultEl.classList.add('checkout-ok');
+      } else {
+        resultEl.textContent = 'Checkout failed. Please try again.';
+        resultEl.classList.add('checkout-error');
+      }
+    } catch (err) {
+      resultEl.textContent = `Could not reach the server: ${err.message}`;
+      resultEl.classList.add('checkout-error');
+    } finally {
+      button.disabled = false;
+      button.textContent = 'Check out now';
+    }
+  });
 }
 
 function renderHero(variation) {
@@ -289,6 +341,19 @@ async function main() {
     renderUnderTheHood(context, currentFlags);
   }
 
+  // renderBanner() replaces bannerSlot's innerHTML, which drops the
+  // checkout button's listener along with the old element, so every call
+  // site that re-renders the banner re-wires the button through this
+  // wrapper instead of calling renderBanner() directly. presetKeyGetter is
+  // a function, not the key itself, because by the time someone clicks
+  // the button currentPresetKey may have moved on to a different preset.
+  function renderBannerWithCheckout(isOn) {
+    renderBanner(isOn);
+    if (isOn) {
+      wireCheckoutButton(() => currentPresetKey);
+    }
+  }
+
   // ---- Attach every client.on(...) listener BEFORE calling client.start() ----
   // In js-client-sdk 4.x the client does not connect until start() is
   // called. Registering listeners first, rather than after kicking off
@@ -306,7 +371,7 @@ async function main() {
   // context, not the new value, so each listener reads the fresh value
   // back with client.variation().
   client.on(`change:${FLAG_RELEASE_BANNER}`, () => {
-    renderBanner(client.variation(FLAG_RELEASE_BANNER, false));
+    renderBannerWithCheckout(client.variation(FLAG_RELEASE_BANNER, false));
     refreshUnderTheHoodPanel(currentContext);
   });
 
@@ -340,7 +405,7 @@ async function main() {
   // resolved.
   const startPromise = client.start({ timeout: 5, bootstrap: window.__LD_BOOTSTRAP__ });
 
-  renderBanner(client.variation(FLAG_RELEASE_BANNER, false));
+  renderBannerWithCheckout(client.variation(FLAG_RELEASE_BANNER, false));
   renderHero(client.variation(FLAG_HERO_REDESIGN, 'control'));
   refreshUnderTheHoodPanel(initialContext);
   // This is the bootstrap value, not yet the live stream: say so, and let
@@ -362,7 +427,7 @@ async function main() {
   // Re-render once start() settles: if the bootstrap above was empty (no
   // LD client on the server yet) or stale, this picks up whatever the SDK
   // resolved once connected.
-  renderBanner(client.variation(FLAG_RELEASE_BANNER, false));
+  renderBannerWithCheckout(client.variation(FLAG_RELEASE_BANNER, false));
   renderHero(client.variation(FLAG_HERO_REDESIGN, 'control'));
   refreshUnderTheHoodPanel(initialContext);
 
@@ -415,7 +480,7 @@ async function main() {
     // Also re-render directly in case the values didn't change (no
     // 'change' event would fire), so the UI always reflects the active
     // context even when both presets happen to get the same variation.
-    renderBanner(client.variation(FLAG_RELEASE_BANNER, false));
+    renderBannerWithCheckout(client.variation(FLAG_RELEASE_BANNER, false));
     renderHero(client.variation(FLAG_HERO_REDESIGN, 'control'));
   });
 

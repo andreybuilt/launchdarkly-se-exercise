@@ -5,7 +5,9 @@
 // LaunchDarkly Node server SDK), a /config.js endpoint that hands the
 // browser its LaunchDarkly client-side ID at runtime (never hard-coded in
 // the bundle), /api/chat + /api/chat/feedback for the AI Configs extra
-// credit (see server/aiChat.mjs), and /healthz for basic liveness checks.
+// credit (see server/aiChat.mjs), /api/checkout + /api/demo/regression for
+// the guarded rollout extra credit (see server/checkout.mjs), and
+// /healthz for basic liveness checks.
 //
 // Run with: npm start  (builds the client bundle first, then starts this)
 
@@ -16,6 +18,7 @@ import express from 'express';
 import { createLdClient, FLAG_RELEASE_BANNER, FLAG_HERO_REDESIGN } from './ldClient.mjs';
 import { DEMO_CONTEXTS, toLdContext, resolveLdContext } from './contexts.mjs';
 import { createSupportChat } from './aiChat.mjs';
+import { createCheckout } from './checkout.mjs';
 
 // `npm start`/`npm run dev` already load .env via `node --env-file-if-exists`
 // (see package.json). This is a fallback for running `node server/index.mjs`
@@ -84,6 +87,17 @@ export function createChatRequestLimiter({ windowMs = 60_000, maxPerWindow = 10,
   };
 }
 
+// Extra credit: guarded rollout. Whether the NEW checkout variation should
+// fail some fraction of the time, read by server/checkout.mjs on every
+// request rather than once at boot, so flipping it mid-demo (via the
+// protected toggle route below) takes effect on the very next checkout.
+// Starts from CHECKOUT_REGRESSION=on in the environment, so a demo can also
+// be scripted entirely from .env with no API call at all. Module-level
+// state (not per-request) on purpose: the regression is a property of "is
+// the new release currently misbehaving," shared by every visitor, not of
+// any one request.
+let checkoutRegressionOn = process.env.CHECKOUT_REGRESSION === 'on';
+
 async function main() {
   const app = express();
 
@@ -91,6 +105,7 @@ async function main() {
   // server/ldClient.mjs for the comment on where LD_SDK_KEY comes from.
   const ldClient = await createLdClient();
   const supportChat = createSupportChat({ ldClient });
+  const checkout = createCheckout({ ldClient, isRegressionOn: () => checkoutRegressionOn });
   const chatRequestLimiter = createChatRequestLimiter();
 
   app.use(express.static(PUBLIC_DIR));
@@ -231,6 +246,48 @@ async function main() {
 
     supportChat.feedback(token, positive, context);
     res.json({ ok: true });
+  });
+
+  // POST /api/checkout {user}
+  // Extra credit: guarded rollout. This is the signal the guarded rollout
+  // watches. Only the NEW banner (flag on) shows the "Check out now"
+  // button that calls this; the old banner has none, matching the brief.
+  // The server evaluates release-new-checkout-banner for this context
+  // (see server/checkout.mjs), simulates a checkout, and tracks
+  // checkout-completed or checkout-error accordingly. The browser never
+  // decides success or failure itself, so the demo stays honest about
+  // what LaunchDarkly is actually measuring.
+  app.post('/api/checkout', async (req, res) => {
+    const { user } = req.body ?? {};
+    const context = resolveLdContext(user);
+    if (!context) {
+      res.status(400).json({ error: 'user must be a preset demo context key or a valid visitor key' });
+      return;
+    }
+
+    const result = await checkout(context);
+    res.json(result);
+  });
+
+  // POST /api/demo/regression {on: true|false}
+  // A presenter-only switch for the checkout regression used in the
+  // guarded rollout demo, as an alternative to restarting the server with
+  // CHECKOUT_REGRESSION=on. Protected behind DEMO_CONTROLS=on in the
+  // environment so this route is inert (404) unless the operator has
+  // deliberately opted in; it is not something a page visitor should ever
+  // be able to flip.
+  app.post('/api/demo/regression', (req, res) => {
+    if (process.env.DEMO_CONTROLS !== 'on') {
+      res.status(404).json({ error: 'not found' });
+      return;
+    }
+    const { on } = req.body ?? {};
+    if (typeof on !== 'boolean') {
+      res.status(400).json({ error: 'on must be a boolean' });
+      return;
+    }
+    checkoutRegressionOn = on;
+    res.json({ ok: true, regressionOn: checkoutRegressionOn });
   });
 
   app.get('/healthz', (req, res) => {

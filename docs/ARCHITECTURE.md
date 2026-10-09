@@ -106,10 +106,14 @@ LaunchDarkly's AI Config monitoring.
   temporary release flag; once the banner is fully rolled out it should be
   archived and the code path simplified, using LaunchDarkly's code
   references / stale flag detection to find the removal point.
-- **Privacy (private attributes).** The demo contexts use plain attributes
-  like `plan` and `region` for a trusted demo audience. Real visitor
-  contexts should mark anything sensitive as a private attribute so it is
-  evaluated but never sent to LaunchDarkly's servers in the clear.
+- **Privacy (private attributes).** The demo marks both `name` attributes
+  private. A private attribute can still be used for targeting, but it is
+  stripped from the analytics events the SDKs send, so LaunchDarkly does not
+  store it. Note the difference between SDKs: the server SDK evaluates
+  locally, while the browser SDK sends the context to LaunchDarkly for
+  evaluation, so a value that must never leave your network belongs in
+  server-side evaluation only. Real visitor contexts should carry only what
+  targeting needs.
 - **Rate limits.** The REST API setup scripts here run once, interactively.
   Production automation that calls the LaunchDarkly REST API repeatedly
   (CI, bulk targeting changes) needs to respect LaunchDarkly's documented

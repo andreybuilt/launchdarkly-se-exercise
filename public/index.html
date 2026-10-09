@@ -53,6 +53,17 @@
       <pre id="flags-json" class="code-block"></pre>
     </section>
 
+    <section class="panel">
+      <h2>Remediation (Part 1)</h2>
+      <p class="hint">
+        Fire the flag trigger created by <code>scripts/setup-launchdarkly.mjs</code>
+        to simulate a monitoring alert turning the checkout banner back off,
+        without touching the LaunchDarkly UI:
+      </p>
+      <pre class="code-block">npm run remediate</pre>
+      <p class="hint">Watch the banner above flip back instantly, same listener, no reload.</p>
+    </section>
+
     <section class="panel panel-wide">
       <h2>Support chat (extra credit: AI Configs)</h2>
       <p class="hint">
@@ -76,17 +87,6 @@
       </form>
     </section>
 
-    <section class="panel">
-      <h2>Remediation (Part 1)</h2>
-      <p class="hint">
-        Fire the flag trigger created by <code>scripts/setup-launchdarkly.mjs</code>
-        to simulate a monitoring alert turning the checkout banner back off,
-        without touching the LaunchDarkly UI:
-      </p>
-      <pre class="code-block">LD_TRIGGER_URL="https://app.launchdarkly.com/webhook/triggers/..." \
-  ./scripts/remediate.sh</pre>
-      <p class="hint">Watch the banner above flip back instantly, same listener, no reload.</p>
-    </section>
   </main>
 
   <footer class="site-footer">
